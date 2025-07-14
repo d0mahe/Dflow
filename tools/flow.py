@@ -18,11 +18,6 @@ from einops import rearrange
 from functools import partial
 
 
-    
-def stopgrad(x):
-    return x.detach()
-
-
 class FlowMatching:
     def __init__(
         self,
@@ -45,6 +40,9 @@ class FlowMatching:
         # flow matching settings
         self.path_type = path_type        
         self.model_mean_type = model_mean_type
+        
+        self.use_mean_flow = flow_ratio < 1.0
+        
         # mean flow settings
         self.flow_ratio = flow_ratio
         self.time_dist = time_dist
@@ -171,21 +169,21 @@ class FlowMatching:
             noise = torch.randn_like(x_start)
             
         t, r = self.sample_t_r(x_start)
-        if self.flow_ratio < 1.0:
+        if self.use_mean_flow:
             model_kwargs["r"] = r
             
         x_t = self.q_sample(x_start, noise, t)
-        _, _, d_alpha_t, d_sigma_t = self.interpolant(t)      
-
-        velocity = d_alpha_t[:, None, None, None] * x_start + d_sigma_t[:, None, None, None] * noise
+        # _, _, d_alpha_t, d_sigma_t = self.interpolant(t)      
+        # velocity = d_alpha_t[:, None, None, None] * x_start + d_sigma_t[:, None, None, None] * noise     
+           
+        _, _, d_alpha_t, d_sigma_t = self.interpolant(self.expand_t_like_x(t, x_t)) 
+        velocity = d_alpha_t * x_start + d_sigma_t * noise
         
         y = model_kwargs.get("y", None)
         
-        mse_loss_weight = torch.ones_like(t)
-
         terms = {}
         # compute the model output and target according to flow ratio
-        if self.flow_ratio < 1.0:
+        if self.use_mean_flow:
             u, u_target = self.compute_u_target(model, x_t, t, r, velocity, c=y)
             model_output = u            
             target = u_target.detach()
@@ -195,23 +193,25 @@ class FlowMatching:
 
         raw_mse = mean_flat((target - model_output) ** 2)
         
-        if self.flow_ratio < 1.0:
+        if self.use_mean_flow:
             # if flow ratio is less than 1.0, we compute adaptive weight
             mse_loss_weight = self.adaptive_weight(raw_mse.detach())
-        
+        else:
+            mse_loss_weight = torch.ones_like(t)
+            
         terms["loss"] = mse_loss_weight * raw_mse
 
         return terms
 
     def adaptive_weight(self, raw_mse, gamma=0.5, c=1e-3):
         """
-        Adaptive L2 loss: sg(w) * ||Δ||_2^2, where w = 1 / (||Δ||^2 + c)^p, p = 1 - γ
+        Adaptive weight: w = 1 / (||Δ||^2 + c)^p, p = 1 - γ
         Args:
-            error: Tensor of shape (B, C, W, H)
+            raw_mse: Tensor of shape (B, C, W, H)
             gamma: Power used in original ||Δ||^{2γ} loss
             c: Small constant for stability
         Returns:
-            Scalar loss
+            weight
         """
         p = 1.0 - gamma
         w = 1.0 / (raw_mse + c).pow(p)
@@ -317,6 +317,9 @@ class FlowMatching:
         else: 
             raise NotImplementedError(f"Unsupported sampler_type: {self.sampler_type}")
 
+
+def stopgrad(x):
+    return x.detach()
 
 def adaptive_l2_loss(error, gamma=0.5, c=1e-3):
     """
