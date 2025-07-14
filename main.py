@@ -21,7 +21,7 @@ from tools.trainer import Trainer
 from tools.sampler import Sampler, Classifier
 from datasets.data_loader import load_dataset
 from torch.nn.parallel import DistributedDataParallel as DDP
-from models.unet import *; from models.dit import *; from models.vit import *; from models.uvit import *
+from models.dit import *; #from models.vit import *; from models.uvit import *
 from tools.flow import (
     FlowMatching,
     ModelMeanType,
@@ -30,10 +30,10 @@ from tools.flow import (
 warnings.filterwarnings("ignore")
 
 model_variants = [
-    "UNet-32","ADM-32", "ADM-64", "ADM-128", "ADM-256", "ADM-512", "UNet-64", "LDM",
-    "ViT-S", "ViT-B", "ViT-L", "ViT-XL",
+    # "ViT-S", "ViT-B", "ViT-L", "ViT-XL",
+    # "U-ViT-S", "U-ViT-S-D", "U-ViT-M", "U-ViT-L", "U-ViT-H",
     "DiT-S", "DiT-B", "DiT-L", "DiT-XL",
-    "U-ViT-S", "U-ViT-S-D", "U-ViT-M", "U-ViT-L", "U-ViT-H"]
+    ]
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and evaluate flow matching models")
@@ -46,31 +46,33 @@ def parse_args():
     parser.add_argument("--patch_size", type=int, default=None, help="Patch Size for ViT, DiT, U-ViT, type is int")
     parser.add_argument("--in_chans", type=int, default=3, help="Number of input channels for the model")
     parser.add_argument("--image_size", type=int, default=32, help="Image size")
-    parser.add_argument("--num_classes", type=int, default=0, help="Number of classes, type is int")
-    parser.add_argument("--model", type=str, default="ADM-32", choices=model_variants, help="Model variant to use")
+    parser.add_argument("--num_classes", type=int, default=0, help="Number of classes, None is for unconditional generation")
+    parser.add_argument("--model", type=str, default="DiT-B", choices=model_variants, help="Model variant to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    
     # Flow Matching 
-    parser.add_argument("--model_mode",type=str,default="mean flow",choices=["mean flow", "flow matching"],
-                                                    help="Choose flow mode: 'flow' for SDE/ODE-based modeling, 'flow' for DDPM-like modeling.")
-    # Flow matching
     parser.add_argument("--path_type", type=str, default='linear', choices=['linear', 'cosine'], help="Path type for flow matching")    
     parser.add_argument('--sampler_type', type=str, default='sde', choices=['sde', 'ode'], help='Type of flow matching sampler to use')   
     # loss type for flow matching
     parser.add_argument("--mean_type", type=str, default='EPSILON', choices=['PREVIOUS_X', 'START_X', 'EPSILON', 'VELOCITY', 'VECTOR', 'SCORE'], help="Predict variable")
+    
     # Training
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for DataLoader")    
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size for training")    
     parser.add_argument("--total_steps", type=int, default=400000, help="Total training steps") 
     parser.add_argument("--ema_decay", type=float, default=0.9999, help="EMA decay rate")        
     parser.add_argument("--class_cond", default=False, type=str2bool, help="Set class_cond to enable class-conditional generation.")
-    parser.add_argument("--learn_sigma", default=False, type=str2bool, help="Set learn_sigma to enable learn distribution sigma.")    
+    parser.add_argument("--flow_ratio", type=float, default=0.5, help="Control how many time steps satisfy r=t, when flow ratio = 1.0,  mean flow degrades as flow matching.")   
+     
     # Adam settings
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument('--betas', type=float, nargs=2, default=(0.9, 0.999), help='Beta values for optimization')
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay for the optimizer")
     parser.add_argument("--eps", type=float, default=1e-8, help="eps for the optimizer")
+    
     # CFG training
     parser.add_argument('--drop_label_prob', type=float, default=0.0, help='Probability of dropping labels for classifier-free guidance')    
+    
     # Sampling latnet
     parser.add_argument("--latent_scale", type=float, default=0.18215, help="scaling factor for latent sample normalization. (0.18215 for unit variance)")
     # Training tircks
@@ -156,42 +158,35 @@ def build_dataset(args):
 
 
 def build_model(args):
-    unet_models = {
-        "UNet-32": UNet_32,"ADM-32": ADM_32, "ADM-64": ADM_64, "ADM-128": ADM_128, 
-        "ADM-256": ADM_256, "ADM-512": ADM_512, "UNet-64": UNet_64, "LDM": LDM,}
-    vit_models = {
-        "ViT-S": ViT_S, "ViT-B": ViT_B, "ViT-L": ViT_L, "ViT-XL": ViT_XL}
+    # vit_models = {
+    #     "ViT-S": ViT_S, "ViT-B": ViT_B, "ViT-L": ViT_L, "ViT-XL": ViT_XL}
     dit_models = {
         "DiT-S": DiT_S, "DiT-B": DiT_B, "DiT-L": DiT_L, "DiT-XL": DiT_XL}
-    uvit_models = {
-        "U-ViT-S": UViT_S, "U-ViT-S-D": UViT_S_D, "U-ViT-M": UViT_M, 
-        "U-ViT-L": UViT_L, "U-ViT-H": UViT_H}
+    # uvit_models = {
+    #     "U-ViT-S": UViT_S, "U-ViT-S-D": UViT_S_D, "U-ViT-M": UViT_M, 
+    #     "U-ViT-L": UViT_L, "U-ViT-H": UViT_H}
 
-    model_dict = {**unet_models, **vit_models, **dit_models, **uvit_models}
-
+    # model_dict = {**vit_models, **dit_models, **uvit_models}
+    
+    model_dict = {**dit_models}
     if args.model not in model_dict:
         raise ValueError(f"Unsupported model variant: {args.model}")
-
-    if any(x in args.model for x in ["UNet", "ADM", "LDM"]):
-        model = model_dict[args.model](num_classes=args.num_classes, in_channels=args.in_chans, 
-                                       drop_label_prob=args.drop_label_prob, dropout=args.dropout, 
-                                       learn_sigma=args.learn_sigma, class_cond=args.class_cond,)
-        
-    elif "U-ViT" in args.model:
-        model = model_dict[args.model](image_size=args.image_size, patch_size=args.patch_size,
-                                       in_channels=args.in_chans, num_classes=args.num_classes) 
+    
+    # if "U-ViT" in args.model:
+    #     model = model_dict[args.model](image_size=args.image_size, patch_size=args.patch_size,
+    #                                    in_channels=args.in_chans, num_classes=args.num_classes) 
                
-    elif "ViT" in args.model:
-        model = model_dict[args.model](image_size=args.image_size, patch_size=args.patch_size,
-                                       num_classes=args.num_classes, in_channels=args.in_chans,
-                                       learn_sigma=args.learn_sigma, drop_rate=args.dropout, 
-                                       drop_label_prob=args.drop_label_prob)
+    # elif "ViT" in args.model:
+    #     model = model_dict[args.model](image_size=args.image_size, patch_size=args.patch_size,
+    #                                    num_classes=args.num_classes, in_channels=args.in_chans,
+    #                                    learn_sigma=args.learn_sigma, drop_rate=args.dropout, 
+    #                                    drop_label_prob=args.drop_label_prob)
 
-    elif "DiT" in args.model:
-        model = model_dict[args.model](image_size=args.image_size, patch_size=args.patch_size,
-                                       in_channels=args.in_chans, num_classes=args.num_classes,
-                                       learn_sigma=args.learn_sigma,
-                                       class_dropout_prob=args.drop_label_prob)
+    # elif "DiT" in args.model:
+    model = model_dict[args.model](image_size=args.image_size, patch_size=args.patch_size,
+                                    in_channels=args.in_chans, num_classes=args.num_classes,
+                                    flow_ratio=args.flow_ratio,
+                                    class_dropout_prob=args.drop_label_prob)
     
     return model
 

@@ -162,18 +162,26 @@ class DiT(nn.Module):
         mlp_ratio=4.0,
         class_dropout_prob=0.1,
         num_classes=1000,
-        learn_sigma=False,
+        flow_ratio=0.5,
     ):
         super().__init__()
-        self.learn_sigma = learn_sigma
         self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels = in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
-
+        self.use_r_embedding = flow_ratio < 1.0
+        
+        self.class_dropout_prob = class_dropout_prob if flow_ratio == 1.0 else 0.0
+        
         self.x_embedder = PatchEmbed(image_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        self.use_cond = num_classes is not None
+        
+        if self.use_r_embedding:
+            self.r_embedder = TimestepEmbedder(hidden_size)
+        
+        self.y_embedder = LabelEmbedder(num_classes, hidden_size, self.class_dropout_prob) if self.use_cond else None
+        
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
@@ -202,7 +210,8 @@ class DiT(nn.Module):
         nn.init.constant_(self.x_embedder.proj.bias, 0)
 
         # Initialize label embedding table:
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+        if self.y_embedder is not None:
+            nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
@@ -234,7 +243,7 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def forward(self, x, t, y, **kwargs):
+    def forward(self, x, t, r=None, y=None, **kwargs):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
@@ -243,10 +252,20 @@ class DiT(nn.Module):
         """
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         t = self.t_embedder(t)  # (N, D)
-        y = self.y_embedder(y, self.training)  # (N, D)
-        c = t + y  # (N, D)
+        
+        if self.use_r_embedding:
+            r = self.r_embedder(r) 
+            t = t + r  # (N, D)
+            
+        c = t  # (N, D)
+        
+        if self.use_cond:
+            y = self.y_embedder(y, self.training)  # (N, D)
+            c = c + y                                # (N, D)
+        
         for block in self.blocks:
             x = block(x, c)  # (N, T, D)
+            
         x = self.final_layer(x, c)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x
@@ -330,21 +349,21 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 #                                   DiT Configs                                  #
 #################################################################################
 
-def DiT_S(image_size, patch_size, in_channels, class_dropout_prob, num_classes, learn_sigma, **kwargs):
+def DiT_S(image_size, patch_size, in_channels, class_dropout_prob, num_classes, flow_ratio, **kwargs):
     return DiT(image_size=image_size, patch_size=patch_size, in_channels=in_channels, hidden_size=384, depth=12, num_heads=6, 
-               class_dropout_prob=class_dropout_prob, num_classes=num_classes, learn_sigma=learn_sigma, **kwargs)
+               class_dropout_prob=class_dropout_prob, num_classes=num_classes, flow_ratio=flow_ratio, **kwargs)
 
-def DiT_B(image_size, patch_size, in_channels, class_dropout_prob, num_classes, learn_sigma, **kwargs):
+def DiT_B(image_size, patch_size, in_channels, class_dropout_prob, num_classes, flow_ratio, **kwargs):
     return DiT(image_size=image_size, patch_size=patch_size,  in_channels=in_channels, hidden_size=768, depth=12, num_heads=12, 
-               class_dropout_prob=class_dropout_prob, num_classes=num_classes, learn_sigma=learn_sigma, **kwargs)
+               class_dropout_prob=class_dropout_prob, num_classes=num_classes, flow_ratio=flow_ratio, **kwargs)
 
-def DiT_L(image_size, patch_size, in_channels, class_dropout_prob, num_classes, learn_sigma, **kwargs):
+def DiT_L(image_size, patch_size, in_channels, class_dropout_prob, num_classes, flow_ratio, **kwargs):
     return DiT(image_size=image_size, patch_size=patch_size, in_channels=in_channels, hidden_size=1024, depth=24, num_heads=16, 
-               class_dropout_prob=class_dropout_prob, num_classes=num_classes, learn_sigma=learn_sigma, **kwargs)
+               class_dropout_prob=class_dropout_prob, num_classes=num_classes, flow_ratio=flow_ratio, **kwargs)
 
-def DiT_XL(image_size, patch_size, in_channels, class_dropout_prob, num_classes, learn_sigma, **kwargs):
+def DiT_XL(image_size, patch_size, in_channels, class_dropout_prob, num_classes, flow_ratio, **kwargs):
     return DiT(image_size=image_size, patch_size=patch_size, in_channels=in_channels, hidden_size=1152, depth=28, num_heads=16, 
-               class_dropout_prob=class_dropout_prob, num_classes=num_classes, learn_sigma=learn_sigma, **kwargs)
+               class_dropout_prob=class_dropout_prob, num_classes=num_classes, flow_ratio=flow_ratio, **kwargs)
 
 DiT_models = {
     "DiT-S": DiT_S,

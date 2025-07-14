@@ -4,7 +4,6 @@ import torch.distributed as dist
 from diffusers.models import AutoencoderKL
 from torch.cuda.amp import autocast
 from tools import dist_util
-from models.unet import EncoderUNetModel
 
 
 def float_equal(num1, num2, eps=1e-8):

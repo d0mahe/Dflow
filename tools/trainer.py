@@ -39,18 +39,9 @@ class Trainer:
             images, labels = next(self.datalooper)
         return images.to(self.device), labels.to(self.device) if self.args.class_cond else None
             
-    def _compute_loss(self, images, labels, step):
+    def _compute_loss(self, images, labels):
         model_kwargs = {"y": labels} if self.args.class_cond else {}
-        t= None
-        # t, weights = self.schedule_sampler.sample(images.shape[0], device=self.device)
-        # t = torch.full((images.shape[0],), step % 1000, device=images.device)
-
-        loss_dict = self.diffusion.training_losses(self.model, images, t=t, model_kwargs=model_kwargs)
-
-        # # Update sampler with local losses if using LossAwareSampler
-        # if isinstance(self.schedule_sampler, LossAwareSampler):
-        #     self.schedule_sampler.update_with_local_losses(t, loss_dict["loss"].detach())
-            
+        loss_dict = self.diffusion.training_losses(self.model, images, model_kwargs=model_kwargs)
         return (loss_dict["loss"]).mean()
 
     def _apply_gradient_clipping(self):
