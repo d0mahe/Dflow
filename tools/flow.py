@@ -336,3 +336,4 @@ class FlowMatching:
                 return self.sde_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
             else: 
                 raise NotImplementedError(f"Unsupported sampler_type: {self.sampler_type}")
+

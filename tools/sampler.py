@@ -146,3 +146,4 @@ class Sampler:
             return self.mean_flow_sampler(num_samples, sample_size, image_size, num_classes, progress_bar)
         else:
             return self.flow_matching_sampler(num_samples, sample_size, image_size, num_classes, progress_bar)
+            
