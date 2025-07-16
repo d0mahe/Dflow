@@ -5,7 +5,6 @@ from diffusers.models import AutoencoderKL
 from torch.cuda.amp import autocast
 from tools import dist_util
 
-
 def float_equal(num1, num2, eps=1e-8):
     return abs(num1 - num2) < eps
 
@@ -22,7 +21,8 @@ class Sampler:
         self.device = device
         self.model = eval_model
         self.flow = flow      
-
+        self.use_mean_flow = self.args.flow_ratio < 1.0
+        
     def _model_fn(self, x, t, y=None):
         return self.model(x, t, y if self.args.class_cond else None)
     
@@ -58,6 +58,35 @@ class Sampler:
                 pbar.update(sample_size * world_size)
 
         return all_samples, all_labels
+    
+    def mean_flow_sampler(self, num_samples, sample_size, image_size, num_classes, progress_bar=False):
+        self.model.eval()
+        all_samples, all_labels = [], []
+        world_size = dist.get_world_size() if self.args.parallel else 1
+
+        if self.args.parallel:
+            sync_ema_model(self.model)
+            dist.barrier()
+
+        if progress_bar and dist_util.is_main_process():
+            pbar = tqdm(total=num_samples, desc=f"Generating Samples ({self.args.solver.capitalize()})")
+
+        vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{self.args.vae}", local_files_only=True).to(self.device) if self.args.in_chans == 4 else None
+        
+
+        while len(all_samples) * sample_size < num_samples:
+            y_cond = self._get_y_cond(sample_size, num_classes)
+            z = torch.randn([sample_size, self.args.in_chans, image_size, image_size], device=self.device)
+            sample = self.flow.sample(self.model, z, self.device, num_steps=self.args.sample_steps, y=y_cond)
+            
+            sample = self._process_sample(sample, vae)
+            self._gather_samples(all_samples, all_labels, sample, y_cond, world_size)
+
+            if dist_util.is_main_process() and progress_bar:
+                pbar.update(sample_size * world_size)
+
+        return all_samples, all_labels
+    
     
     def _get_y_cond(self, sample_size, num_classes):
         y_cond = None  
@@ -113,8 +142,7 @@ class Sampler:
     
     
     def sample(self, num_samples, sample_size, image_size, num_classes, progress_bar=False):
-        if self.args.model_mode == 'flow':
-            return self.flow_matching_sampler(num_samples, sample_size, image_size, num_classes, progress_bar)    
+        if self.use_mean_flow:
+            return self.mean_flow_sampler(num_samples, sample_size, image_size, num_classes, progress_bar)
         else:
-            raise ValueError(f"Unsupported model_mode: {self.args.model_mode}")
-
+            return self.flow_matching_sampler(num_samples, sample_size, image_size, num_classes, progress_bar)

@@ -157,8 +157,6 @@ class FlowMatching:
         u_target = v_hat - (t_ - r_) * dudt
         return u, u_target
 
-
-    
     def q_sample(self, x_start, noise, t,):
         t = self.expand_t_like_x(t, x_start)
         alpha_t, sigma_t, _, _ = self.interpolant(t)
@@ -329,9 +327,12 @@ class FlowMatching:
         return z
     
     def sample(self, model, noise, device, num_steps=50, solver='heun', guidance_scale=1.0, **model_kwargs):
-        if self.sampler_type == "ode": 
-            return self.ode_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
-        elif self.sampler_type == "sde": 
-            return self.sde_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
-        else: 
-            raise NotImplementedError(f"Unsupported sampler_type: {self.sampler_type}")
+        if self.use_mean_flow:
+            return self.mean_flow_sample(model, noise, device, num_steps, **model_kwargs)
+        else:
+            if self.sampler_type == "ode": 
+                return self.ode_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
+            elif self.sampler_type == "sde": 
+                return self.sde_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
+            else: 
+                raise NotImplementedError(f"Unsupported sampler_type: {self.sampler_type}")
