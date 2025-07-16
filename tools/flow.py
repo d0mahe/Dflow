@@ -30,10 +30,11 @@ class FlowMatching:
         # set scale as none to disable CFG distill
         mf_cfg_scale=2.0,
         # experimental
-        mf_cfg_uncond='v',
+        # mf_cfg_uncond='v',
         jvp_api='autograd',
         
         sampler_type="sde",   
+        interval=(1.0, 0.0), # for mean flow sampling, the interval of t and r
         atol=1e-6,
         rtol=1e-5,
     ):
@@ -47,7 +48,7 @@ class FlowMatching:
         self.flow_ratio = flow_ratio
         self.time_dist = time_dist
         self.mf_cfg_ratio = mf_cfg_ratio
-        self.mf_cfg_uncond = mf_cfg_uncond        
+        # self.mf_cfg_uncond = mf_cfg_uncond        
         self.w = mf_cfg_scale
         self.jvp_api = jvp_api
         assert jvp_api in ['funtorch', 'autograd'], "jvp_api must be 'funtorch' or 'autograd'"
@@ -61,6 +62,7 @@ class FlowMatching:
         #sample settings
         self.atol = atol
         self.rtol = rtol
+        self.interval = interval
         self.sampler_type = sampler_type
                     
     def expand_t_like_x(self, t, x):
@@ -127,9 +129,9 @@ class FlowMatching:
                 u_t = model(x_t, t, t, c_cfg)
             v_hat_guided = self.w * v_hat + (1 - self.w) * u_t
 
-            if self.mf_cfg_uncond == 'v':
-                cfg_mask = rearrange(cfg_mask, "b -> b 1 1 1").bool()
-                v_hat_guided = torch.where(cfg_mask, v_hat, v_hat_guided)
+            # if self.mf_cfg_uncond == 'v':
+            cfg_mask = rearrange(cfg_mask, "b -> b 1 1 1").bool()
+            v_hat_guided = torch.where(cfg_mask, v_hat, v_hat_guided)
             return v_hat_guided
         else:
             return v_hat
@@ -148,8 +150,10 @@ class FlowMatching:
         )
 
         u, dudt = self.jvp_fn(*jvp_args, create_graph=self.create_graph)
-        t_ = self.expand_t_like_x(t, x_t)
-        r_ = self.expand_t_like_x(r, x_t)
+        # t_ = self.expand_t_like_x(t, x_t)
+        # r_ = self.expand_t_like_x(r, x_t)
+        t_ = rearrange(t, "b -> b 1 1 1").detach().clone()
+        r_ = rearrange(r, "b -> b 1 1 1").detach().clone()
         u_target = v_hat - (t_ - r_) * dudt
         return u, u_target
 
@@ -308,7 +312,22 @@ class FlowMatching:
             mean_x = x_t + d_cur * dt  # no noise
 
         return mean_x
+    
+    def mean_flow_sample(self, model, z, device, num_steps=1, classes=None,):
+        start, end = self.interval
+        t_vals = torch.linspace(start, end, num_steps + 1, device=device)
+        # print(t_vals)
+        for i in range(num_steps):
+            t = torch.full((z.size(0),), t_vals[i], device=device)
+            r = torch.full((z.size(0),), t_vals[i + 1], device=device)
+            # print(f"t: {t[0].item():.4f};  r: {r[0].item():.4f}")
+            t_ = rearrange(t, "b -> b 1 1 1").detach().clone()
+            r_ = rearrange(r, "b -> b 1 1 1").detach().clone()
+            u = model(z, t, r, classes)
+            z = z - (t_-r_) * u
 
+        return z
+    
     def sample(self, model, noise, device, num_steps=50, solver='heun', guidance_scale=1.0, **model_kwargs):
         if self.sampler_type == "ode": 
             return self.ode_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
