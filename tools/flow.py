@@ -26,13 +26,12 @@ class FlowMatching:
         path_type,         
         flow_ratio=0.50, #control how many time steps satisfy r=t, when flow ratio = 1.0,  mean flow degrades as flow matching
         time_dist=['lognorm', -0.4, 1.0], #sampling timestep interval [r, t].
-        mf_cfg_ratio=0.10,
+        cfg_ratio=0.10,
         # set scale as none to disable CFG distill
-        mf_cfg_scale=2.0,
+        cfg_scale=2.0,
         # experimental
-        # mf_cfg_uncond='v',
+        # cfg_uncond='v',
         jvp_api='autograd',
-        
         sampler_type="sde",   
         interval=(1.0, 0.0), # for mean flow sampling, the interval of t and r
         atol=1e-6,
@@ -47,9 +46,9 @@ class FlowMatching:
         # mean flow settings
         self.flow_ratio = flow_ratio
         self.time_dist = time_dist
-        self.mf_cfg_ratio = mf_cfg_ratio
-        # self.mf_cfg_uncond = mf_cfg_uncond        
-        self.w = mf_cfg_scale
+        self.cfg_ratio = cfg_ratio
+        # self.cfg_uncond = cfg_uncond        
+        self.w = cfg_scale
         self.jvp_api = jvp_api
         assert jvp_api in ['funtorch', 'autograd'], "jvp_api must be 'funtorch' or 'autograd'"
         if jvp_api == 'funtorch':
@@ -117,11 +116,11 @@ class FlowMatching:
         """
         Apply classifier-free guidance and return modified v_hat.
         """
-        if c is None or self.mf_cfg_ratio is None:
+        if c is None or self.cfg_ratio is None:
             return v_hat
 
         uncond = torch.ones_like(c) * getattr(self, "num_classes", 1000)
-        cfg_mask = torch.rand_like(c.float()) < self.mf_cfg_ratio
+        cfg_mask = torch.rand_like(c.float()) < self.cfg_ratio
         c_cfg = torch.where(cfg_mask, uncond, c)
 
         if self.w is not None:
@@ -129,7 +128,7 @@ class FlowMatching:
                 u_t = model(x_t, t, t, c_cfg)
             v_hat_guided = self.w * v_hat + (1 - self.w) * u_t
 
-            # if self.mf_cfg_uncond == 'v':
+            # if self.cfg_uncond == 'v':
             cfg_mask = rearrange(cfg_mask, "b -> b 1 1 1").bool()
             v_hat_guided = torch.where(cfg_mask, v_hat, v_hat_guided)
             return v_hat_guided
@@ -336,4 +335,3 @@ class FlowMatching:
                 return self.sde_sample(model, noise, device, num_steps, solver=solver, guidance_scale=guidance_scale, **model_kwargs)
             else: 
                 raise NotImplementedError(f"Unsupported sampler_type: {self.sampler_type}")
-

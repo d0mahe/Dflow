@@ -43,18 +43,24 @@ def parse_args():
 
     parser.add_argument("--data_dir", type=str, default='./data', help="Path to the dataset directory")
     parser.add_argument("--dataset", type=str, default='CIFAR-10', choices=['CIFAR-10', 'Gaussian', 'CelebA', 'ImageNet', 'LSUN', 'Latent'], help="Dataset to train on")
-    parser.add_argument("--patch_size", type=int, default=None, help="Patch Size for ViT, DiT, U-ViT, type is int")
+    parser.add_argument("--patch_size", type=int, default=2, help="Patch Size for ViT, DiT, U-ViT, type is int")
     parser.add_argument("--in_chans", type=int, default=3, help="Number of input channels for the model")
     parser.add_argument("--image_size", type=int, default=32, help="Image size")
-    parser.add_argument("--num_classes", type=int, default=0, help="Number of classes, None is for unconditional generation")
+    parser.add_argument("--num_classes", type=int, default=10, help="Number of classes, None is for unconditional generation")
     parser.add_argument("--model", type=str, default="DiT-B", choices=model_variants, help="Model variant to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     
     # Flow Matching 
     parser.add_argument("--path_type", type=str, default='linear', choices=['linear', 'cosine'], help="Path type for flow matching")    
-    parser.add_argument('--sampler_type', type=str, default='sde', choices=['sde', 'ode'], help='Type of flow matching sampler to use')   
-    # loss type for flow matching
-    parser.add_argument("--mean_type", type=str, default='EPSILON', choices=['PREVIOUS_X', 'START_X', 'EPSILON', 'VELOCITY', 'VECTOR', 'SCORE'], help="Predict variable")
+    parser.add_argument('--sampler_type', type=str, default='ode', choices=['sde', 'ode'], help='Type of flow matching sampler to use')   
+    
+    ##Mean Flow settings
+    parser.add_argument("--flow_ratio", type=float, default=0.5, help="Control how many percent time steps satisfy r=t, when flow ratio = 1.0, mean flow degrades as flow matching.")       
+    parser.add_argument('--time_dist', nargs='+', default=['lognorm', -0.4, 1.0], help="Time sampling distribution for mean flow training: ['uniform'] or ['lognorm', mu, sigma]")
+    parser.add_argument('--cfg_ratio', type=float, default=0.10, help="Classifier-free guidance dropout ratio (training only)")
+    parser.add_argument('--cfg_scale', type=float, default=2.0, help="Guidance scale during sampling (w in CFG, >=1.0)")
+    parser.add_argument('--jvp_api', type=str, default='autograd', choices=['autograd', 'funtorch'], help="JVP backend: 'autograd' (default) or 'funtorch'")
+    parser.add_argument('--interval', type=float, nargs=2, default=[1.0, 0.0], help="Time interval [start, end] for mean flow sampling (e.g., 1.0 0.0)")
     
     # Training
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for DataLoader")    
@@ -62,7 +68,6 @@ def parse_args():
     parser.add_argument("--total_steps", type=int, default=400000, help="Total training steps") 
     parser.add_argument("--ema_decay", type=float, default=0.9999, help="EMA decay rate")        
     parser.add_argument("--class_cond", default=False, type=str2bool, help="Set class_cond to enable class-conditional generation.")
-    parser.add_argument("--flow_ratio", type=float, default=0.5, help="Control how many time steps satisfy r=t, when flow ratio = 1.0,  mean flow degrades as flow matching.")   
      
     # Adam settings
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -70,7 +75,7 @@ def parse_args():
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay for the optimizer")
     parser.add_argument("--eps", type=float, default=1e-8, help="eps for the optimizer")
     
-    # CFG training
+    # CFG training for Flow Matching
     parser.add_argument('--drop_label_prob', type=float, default=0.0, help='Probability of dropping labels for classifier-free guidance')    
     
     # Sampling latnet
@@ -92,19 +97,19 @@ def parse_args():
     parser.add_argument("--sample_freq", type=int, default=10000, help="Frequency of sampling during training")        
     parser.add_argument("--sample_steps", type=int, default=18, help="Number of sample Flow Matching steps")   
     parser.add_argument("--class_labels", type=int, nargs="+", default=None, help="Specify the class labels used for sampling, e.g., --class_labels 207 360 387") 
-    # cfg and limited interval guidance
+    # cfg and limited interval guidance for Flow Matching
     parser.add_argument('--guidance_scale', type=float, default=1.0, help='Scale factor for classifier-free guidance')       
     parser.add_argument('--t_from', type=float, default=-1, help='Starting timestep for finite interval guidance (non-negative, >= 0). Set to -1 to disable interval guidance.')
     parser.add_argument('--t_to', type=float, default=-1, help='Ending timestep for finite interval guidance (must be > t_from). Set to -1 to disable interval guidance.')    
     # which version of latnet model to choose
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")
     # ode/sde solver
-    parser.add_argument("--solver", type=str, default='heun', choices=['ddim', 'heun', 'euler', 'dopri5'], help="Choose sampler 'ddim', 'euler' or 'heun'")
+    parser.add_argument("--solver", type=str, default='heun', choices=['heun', 'euler', 'dopri5'], help="Choose sampler 'euler' or 'heun'")
     parser.add_argument("--atol", type=float, default=1e-6, help="Absolute tolerance")
     parser.add_argument("--rtol", type=float, default=1e-3, help="Relative tolerance")
     # Evaluation
     parser.add_argument("--save_step", type=int, default=100000, help="Frequency of saving checkpoints, 0 to disable during training")
-    parser.add_argument("--eval_step", type=int, default=50000, help="Frequency of evaluating model, 0 to disable during training")
+    parser.add_argument("--eval_step", type=int, default=100000, help="Frequency of evaluating model, 0 to disable during training")
     parser.add_argument("--num_samples", type=int, default=50000, help="The number of generated images for evaluation")
     parser.add_argument("--ref_batch", type=str, default='./reference_batches/fid_stats_cifar_train.npz', help="FID cache")
 
