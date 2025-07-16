@@ -55,12 +55,12 @@ def parse_args():
     parser.add_argument('--sampler_type', type=str, default='ode', choices=['sde', 'ode'], help='Type of flow matching sampler to use')   
     
     ##Mean Flow settings
-    parser.add_argument("--flow_ratio", type=float, default=0.5, help="Control how many percent time steps satisfy r=t, when flow ratio = 1.0, mean flow degrades as flow matching.")       
+    parser.add_argument("--flow_ratio", type=float, default=0.5, help="Controls the percentage of time steps where r = t. When the flow ratio is 1.0, the mean flow degrades to flow matching.")       
     parser.add_argument('--time_dist', nargs='+', default=['lognorm', -0.4, 1.0], help="Time sampling distribution for mean flow training: ['uniform'] or ['lognorm', mu, sigma]")
     parser.add_argument('--cfg_ratio', type=float, default=0.10, help="Classifier-free guidance dropout ratio (training only)")
     parser.add_argument('--cfg_scale', type=float, default=2.0, help="Guidance scale during sampling (w in CFG, >=1.0)")
     parser.add_argument('--jvp_api', type=str, default='autograd', choices=['autograd', 'funtorch'], help="JVP backend: 'autograd' (default) or 'funtorch'")
-    parser.add_argument('--interval', type=float, nargs=2, default=[1.0, 0.0], help="Time interval [start, end] for mean flow sampling (e.g., 1.0 0.0)")
+    parser.add_argument('--interval', type=float, nargs=2, default=(1.0, 0.0), help="Time interval [start, end] for mean flow sampling (e.g., 1.0 0.0)")
     
     # Training
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for DataLoader")    
@@ -80,6 +80,7 @@ def parse_args():
     
     # Sampling latnet
     parser.add_argument("--latent_scale", type=float, default=0.18215, help="scaling factor for latent sample normalization. (0.18215 for unit variance)")
+    
     # Training tircks
     parser.add_argument("--warmup_steps", type=int, default=5000, help="Learning rate warmup")    
     parser.add_argument("--final_lr", type=float, default=0.0, help="Final learning rate")
