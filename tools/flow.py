@@ -21,7 +21,7 @@ from functools import partial
 class FlowMatching:
     def __init__(
         self,
-        *,
+        args,
         path_type,         
         flow_ratio=0.50, #control how many time steps satisfy r=t, when flow ratio = 1.0,  mean flow degrades as flow matching
         time_dist=['lognorm', -0.4, 1.0], #sampling timestep interval [r, t].
@@ -32,13 +32,14 @@ class FlowMatching:
         # cfg_uncond='v',
         jvp_api='autograd',
         sampler_type="sde",   
+        
         interval=(1.0, 0.0), # for mean flow sampling, the interval of t and r
-        atol=1e-6,
-        rtol=1e-5,
+        # atol=1e-6,
+        # rtol=1e-5,
     ):
+        self.args= args
         # flow matching settings
         self.path_type = path_type        
-        
         self.use_mean_flow = flow_ratio < 1.0
         
         # mean flow settings
@@ -46,7 +47,7 @@ class FlowMatching:
         self.time_dist = time_dist
         self.drop_label_prob = drop_label_prob
         # self.cfg_uncond = cfg_uncond        
-        self.w = guidance_scale
+        self.guidance_scale = guidance_scale
         self.jvp_api = jvp_api
         assert jvp_api in ['funtorch', 'autograd'], "jvp_api must be 'funtorch' or 'autograd'"
         if jvp_api == 'funtorch':
@@ -57,8 +58,8 @@ class FlowMatching:
             self.create_graph = True
         
         #sample settings
-        self.atol = atol
-        self.rtol = rtol
+        # self.atol = atol
+        # self.rtol = rtol
         self.interval = interval
         self.sampler_type = sampler_type
                     
@@ -86,7 +87,12 @@ class FlowMatching:
             raise NotImplementedError()
 
         return alpha_t, sigma_t, d_alpha_t, d_sigma_t
-
+    
+    def _limited_interval_guidance(self, t_from, t_to, guidance_scale):
+        if t_from >= 0 and t_to > t_from:
+            return lambda t: guidance_scale if t_from <= t <= t_to else 1.0
+        return guidance_scale
+    
     # fix: r should be always not larger than t
     def sample_t_r(self, x_start):
         if self.time_dist[0] == 'uniform':
@@ -117,14 +123,16 @@ class FlowMatching:
         if c is None or self.drop_label_prob is None:
             return v_hat
 
-        uncond = torch.ones_like(c) * getattr(self, "num_classes", 1000)
+        uncond = torch.ones_like(c) * self.args.num_classes
         cfg_mask = torch.rand_like(c.float()) < self.drop_label_prob
         c_cfg = torch.where(cfg_mask, uncond, c)
-
-        if self.w is not None:
+        
+        guidance_scale = self._limited_interval_guidance(self.args.t_from, self.args.t_to, self.guidance_scale)
+        
+        if self.guidance_scale is not None:
             # with torch.no_grad():
             u_t = model(x_t, t, t, c_cfg).detach()
-            v_hat_guided = self.w * v_hat + (1 - self.w) * u_t
+            v_hat_guided = guidance_scale * v_hat + (1 - guidance_scale) * u_t
 
             # if self.cfg_uncond == 'v':
             cfg_mask = rearrange(cfg_mask, "b -> b 1 1 1").bool()
@@ -204,7 +212,7 @@ class FlowMatching:
 
         return terms
 
-    def adaptive_weight(self, raw_mse, gamma=0.5, c=1e-3):
+    def adaptive_weight(self, raw_mse, gamma=0.0, c=1e-3):
         """
         Adaptive weight: w = 1 / (||Δ||^2 + c)^p, p = 1 - γ
         Args:
@@ -244,8 +252,8 @@ class FlowMatching:
             y0=noise,
             t=timesteps,
             method=solver,
-            rtol=self.rtol,
-            atol=self.atol,
+            rtol=self.args.rtol,
+            atol=self.args.atol,
         )
         return samples[-1]
     

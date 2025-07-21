@@ -42,11 +42,11 @@ def parse_args():
 
     parser.add_argument("--data_dir", type=str, default='/home/r0yu0002/Dflow/ImageNet.h5', help="Path to the dataset directory")
     parser.add_argument("--dataset", type=str, default='Latent', choices=['CIFAR-10', 'Gaussian', 'CelebA', 'ImageNet', 'LSUN', 'Latent'], help="Dataset to train on")
-    parser.add_argument("--patch_size", type=int, default=2, help="Patch Size for ViT, DiT, U-ViT, type is int")
+    parser.add_argument("--patch_size", type=int, default=4, help="Patch Size for ViT, DiT, U-ViT, type is int")
     parser.add_argument("--in_chans", type=int, default=4, help="Number of input channels for the model")
     parser.add_argument("--image_size", type=int, default=32, help="Image size")
     parser.add_argument("--num_classes", type=int, default=1000, help="Number of classes, None is for unconditional generation")
-    parser.add_argument("--model", type=str, default="DiT-S", choices=model_variants, help="Model variant to use")
+    parser.add_argument("--model", type=str, default="DiT-B", choices=model_variants, help="Model variant to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     
     # Flow Matching 
@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument('--sampler_type', type=str, default='ode', choices=['sde', 'ode'], help='Type of flow matching sampler to use')   
     
     ##Mean Flow settings
-    parser.add_argument("--flow_ratio", type=float, default=0.5, help="Controls the percentage of time steps where r = t. When the flow ratio is 1.0, the mean flow degrades to flow matching.")       
+    parser.add_argument("--flow_ratio", type=float, default=0.75, help="Controls the percentage of time steps where r = t. When the flow ratio is 1.0, the mean flow degrades to flow matching.")       
     parser.add_argument('--time_dist', nargs='+', default=['lognorm', -0.4, 1.0], help="Time sampling distribution for mean flow training: ['uniform'] or ['lognorm', mu, sigma]")
     parser.add_argument('--jvp_api', type=str, default='autograd', choices=['autograd', 'funtorch'], help="JVP backend: 'autograd' (default) or 'funtorch'")
     parser.add_argument('--interval', type=float, nargs=2, default=(1.0, 0.0), help="Time interval [start, end] for mean flow sampling (e.g., 1.0 0.0)")
@@ -68,13 +68,13 @@ def parse_args():
      
     # Adam settings
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument('--betas', type=float, nargs=2, default=(0.9, 0.999), help='Beta values for optimization')
+    parser.add_argument('--betas', type=float, nargs=2, default=(0.9, 0.95), help='Beta values for optimization')
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay for the optimizer")
     parser.add_argument("--eps", type=float, default=1e-8, help="eps for the optimizer")
     
     # CFG training and limited interval guidance
     parser.add_argument('--drop_label_prob', type=float, default=0.1, help='Probability of dropping labels for classifier-free guidance')    
-    parser.add_argument('--guidance_scale', type=float, default=2.0, help='Scale factor for classifier-free guidance')       
+    parser.add_argument('--guidance_scale', type=float, default=3.0, help='Scale factor for classifier-free guidance')       
     parser.add_argument('--t_from', type=float, default=-1, help='Starting timestep for finite interval guidance (non-negative, >= 0). Set to -1 to disable interval guidance.')
     parser.add_argument('--t_to', type=float, default=-1, help='Ending timestep for finite interval guidance (must be > t_from). Set to -1 to disable interval guidance.')    
     
@@ -87,6 +87,7 @@ def parse_args():
     parser.add_argument("--grad_clip", type=float, default=None, help="Gradient norm clipping")
     parser.add_argument("--dropout", type=float, default=0.0, help='Dropout rate of resblock')
     parser.add_argument("--cosine_decay", default=False, type=str2bool, help="Whether to use cosine learning rate decay")
+    
     # DDP nad mixed precision training
     parser.add_argument("--parallel", default=True, type=str2bool, help="Use multi-GPU training")
     parser.add_argument('--amp', default=True, type=str2bool, help='Use AMP for mixed precision training')
@@ -95,7 +96,7 @@ def parse_args():
     # Logging & Sampling
     parser.add_argument("--logdir", type=str, default='./logs', help="Log directory")
     parser.add_argument("--sample_size", type=int, default=64, help="Sampling size of images")
-    parser.add_argument("--sample_freq", type=int, default=10000, help="Frequency of sampling during training")        
+    parser.add_argument("--sample_freq", type=int, default=10, help="Frequency of sampling during training")        
     parser.add_argument("--sample_steps", type=int, default=18, help="Number of sample Flow Matching steps")   
     parser.add_argument("--class_labels", type=int, nargs="+", default=None, help="Specify the class labels used for sampling, e.g., --class_labels 207 360 387") 
 
@@ -194,6 +195,7 @@ def build_model(args):
 
 def build_flow(args):
     flow_kwargs = dict(
+        args=args,
         path_type=args.path_type,   
         flow_ratio=args.flow_ratio,  
         time_dist=args.time_dist,  
@@ -202,8 +204,8 @@ def build_flow(args):
         jvp_api=args.jvp_api,
         interval=args.interval, 
         sampler_type=args.sampler_type,         
-        atol = args.atol,
-        rtol = args.rtol,
+        # atol = args.atol,
+        # rtol = args.rtol,
     )
     return FlowMatching(**flow_kwargs)
     
@@ -261,7 +263,7 @@ def train(args, **kwargs):
             # Sample and save images
             if args.sample_freq > 0 and step % args.sample_freq == 0:
                 # sample_and_save(args, step, device, ema_model, save_grid=True)
-                generate_samples(args, step, device, ema_model, save_grid=True)
+                generate_samples(args, step, device, ema_model, flow, save_grid=True)
     
             # Save checkpoint
             if args.save_step > 0 and step % args.save_step == 0 and step > 0:

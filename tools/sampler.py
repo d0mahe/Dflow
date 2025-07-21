@@ -77,7 +77,7 @@ class Sampler:
         while len(all_samples) * sample_size < num_samples:
             y_cond = self._get_y_cond(sample_size, num_classes)
             z = torch.randn([sample_size, self.args.in_chans, image_size, image_size], device=self.device)
-            sample = self.flow.sample(self.model, z, self.device, num_steps=self.args.sample_steps, y=y_cond)
+            sample = self.flow.sample(self.model, z, self.device, num_steps=self.args.sample_steps, classes=y_cond)
             
             sample = self._process_sample(sample, vae)
             self._gather_samples(all_samples, all_labels, sample, y_cond, world_size)
