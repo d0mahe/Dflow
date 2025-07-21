@@ -18,6 +18,9 @@ from einops import rearrange
 from functools import partial
 
 
+# def float_equal(num1, num2, eps=1e-8):
+#     return abs(num1 - num2) < eps
+
 class FlowMatching:
     def __init__(
         self,
@@ -129,6 +132,7 @@ class FlowMatching:
         
         guidance_scale = self._limited_interval_guidance(self.args.t_from, self.args.t_to, self.guidance_scale)
         
+        # if not float_equal(self.guidance_scale, 1.0):
         if self.guidance_scale is not None:
             # with torch.no_grad():
             u_t = model(x_t, t, t, c_cfg).detach()
@@ -210,7 +214,7 @@ class FlowMatching:
             
         terms["loss"] = mse_loss_weight * raw_mse
 
-        return terms
+        return terms, raw_mse.mean().item()
 
     def adaptive_weight(self, raw_mse, gamma=0.0, c=1e-3):
         """

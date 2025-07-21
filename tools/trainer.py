@@ -41,8 +41,8 @@ class Trainer:
             
     def _compute_loss(self, images, labels):
         model_kwargs = {"y": labels} if self.args.class_cond else {}
-        loss_dict = self.diffusion.training_losses(self.model, images, model_kwargs=model_kwargs)
-        return (loss_dict["loss"]).mean()
+        loss_dict, raw_mse = self.diffusion.training_losses(self.model, images, model_kwargs=model_kwargs)
+        return (loss_dict["loss"]).mean(), raw_mse
 
     def _apply_gradient_clipping(self):
         if self.args.grad_clip:
@@ -75,13 +75,16 @@ class Trainer:
             if self.args.amp:
                 with autocast():
                 # with autocast(dtype=torch.bfloat16):
-                    loss = self._compute_loss(images, labels) / grad_accumulation  # Scale loss for accumulation
+                    loss, raw_mse = self._compute_loss(images, labels) 
+                    loss /= grad_accumulation  # Scale loss for accumulation
                 self.scaler.scale(loss).backward()
             else:
-                loss = self._compute_loss(images, labels) / grad_accumulation  # Scale loss for accumulation
+                loss, raw_mse = self._compute_loss(images, labels) 
+                loss /= grad_accumulation  # Scale loss for accumulation
                 loss.backward()
                 
-            loss_accumulated += loss.item()
+            loss_accumulated += raw_mse 
+            # loss_accumulated += raw_mse.item()
 
             # Perform optimization step only after grad_accumulation steps
             if (accumulation_step + 1) % grad_accumulation == 0:
@@ -104,6 +107,6 @@ class Trainer:
         if dist_util.is_main_process():
             self._update_ema()
             self.pbar.update(1)
-            self.pbar.set_postfix(loss=loss_accumulated)
+            self.pbar.set_postfix(mse=loss_accumulated)
 
         return loss_accumulated  # Return scalar accumulated loss 
