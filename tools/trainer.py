@@ -75,10 +75,10 @@ class Trainer:
             if self.args.amp:
                 with autocast():
                 # with autocast(dtype=torch.bfloat16):
-                    loss = self._compute_loss(images, labels, step) / grad_accumulation  # Scale loss for accumulation
+                    loss = self._compute_loss(images, labels) / grad_accumulation  # Scale loss for accumulation
                 self.scaler.scale(loss).backward()
             else:
-                loss = self._compute_loss(images, labels, step) / grad_accumulation  # Scale loss for accumulation
+                loss = self._compute_loss(images, labels) / grad_accumulation  # Scale loss for accumulation
                 loss.backward()
                 
             loss_accumulated += loss.item()

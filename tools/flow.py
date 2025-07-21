@@ -22,13 +22,12 @@ class FlowMatching:
     def __init__(
         self,
         *,
-        model_mean_type,
         path_type,         
         flow_ratio=0.50, #control how many time steps satisfy r=t, when flow ratio = 1.0,  mean flow degrades as flow matching
         time_dist=['lognorm', -0.4, 1.0], #sampling timestep interval [r, t].
-        cfg_ratio=0.10,
+        drop_label_prob=0.10,
         # set scale as none to disable CFG distill
-        cfg_scale=2.0,
+        guidance_scale=2.0,
         # experimental
         # cfg_uncond='v',
         jvp_api='autograd',
@@ -39,16 +38,15 @@ class FlowMatching:
     ):
         # flow matching settings
         self.path_type = path_type        
-        self.model_mean_type = model_mean_type
         
         self.use_mean_flow = flow_ratio < 1.0
         
         # mean flow settings
         self.flow_ratio = flow_ratio
         self.time_dist = time_dist
-        self.cfg_ratio = cfg_ratio
+        self.drop_label_prob = drop_label_prob
         # self.cfg_uncond = cfg_uncond        
-        self.w = cfg_scale
+        self.w = guidance_scale
         self.jvp_api = jvp_api
         assert jvp_api in ['funtorch', 'autograd'], "jvp_api must be 'funtorch' or 'autograd'"
         if jvp_api == 'funtorch':
@@ -116,16 +114,16 @@ class FlowMatching:
         """
         Apply classifier-free guidance and return modified v_hat.
         """
-        if c is None or self.cfg_ratio is None:
+        if c is None or self.drop_label_prob is None:
             return v_hat
 
         uncond = torch.ones_like(c) * getattr(self, "num_classes", 1000)
-        cfg_mask = torch.rand_like(c.float()) < self.cfg_ratio
+        cfg_mask = torch.rand_like(c.float()) < self.drop_label_prob
         c_cfg = torch.where(cfg_mask, uncond, c)
 
         if self.w is not None:
-            with torch.no_grad():
-                u_t = model(x_t, t, t, c_cfg)
+            # with torch.no_grad():
+            u_t = model(x_t, t, t, c_cfg).detach()
             v_hat_guided = self.w * v_hat + (1 - self.w) * u_t
 
             # if self.cfg_uncond == 'v':
@@ -135,10 +133,12 @@ class FlowMatching:
         else:
             return v_hat
         
+    # @torch.no_grad()    
     def compute_u_target(self, model, x_t, t, r, v_hat, c):
         """
         Compute model output and u_target = v_hat - (t - r) * ∂u/∂t
         """
+
         v_hat = self.apply_cfg_for_mf(model, x_t, t, v_hat, c)
         model_partial = partial(model, y=c) if c is not None else model
 
@@ -181,7 +181,7 @@ class FlowMatching:
         velocity = d_alpha_t * x_start + d_sigma_t * noise
         
         y = model_kwargs.get("y", None)
-        
+        # print(y)
         terms = {}
         # compute the model output and target according to flow ratio
         if self.use_mean_flow:

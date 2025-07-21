@@ -75,13 +75,14 @@ class LabelEmbedder(nn.Module):
     Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
     """
 
-    def __init__(self, num_classes, hidden_size, dropout_prob):
+    def __init__(self, num_classes, hidden_size, dropout_prob, use_mean_flow):
         super().__init__()
-        use_cfg_embedding = dropout_prob > 0
+        use_cfg_embedding = dropout_prob > 0 
         self.embedding_table = nn.Embedding(num_classes + use_cfg_embedding, hidden_size)
         self.num_classes = num_classes
         self.dropout_prob = dropout_prob
-
+        self.use_mean_flow = use_mean_flow
+        
     def token_drop(self, labels, force_drop_ids=None):
         """
         Drops labels to enable classifier-free guidance.
@@ -95,8 +96,11 @@ class LabelEmbedder(nn.Module):
 
     def forward(self, labels, train, force_drop_ids=None):
         use_dropout = self.dropout_prob > 0
-        if (train and use_dropout) or (force_drop_ids is not None):
-            labels = self.token_drop(labels, force_drop_ids)
+        # if (train and use_dropout) or (force_drop_ids is not None):
+        if not self.use_mean_flow:
+            if (train and use_dropout) or (force_drop_ids is not None):
+                labels = self.token_drop(labels, force_drop_ids)
+        #     labels = self.token_drop(labels, force_drop_ids)
         embeddings = self.embedding_table(labels)
         return embeddings
 
@@ -169,18 +173,18 @@ class DiT(nn.Module):
         self.out_channels = in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
-        self.use_r_embedding = flow_ratio < 1.0
+        self.use_mean_flow = flow_ratio < 1.0
         
-        self.class_dropout_prob = class_dropout_prob if flow_ratio == 1.0 else 0.0
+        self.class_dropout_prob = class_dropout_prob 
         
         self.x_embedder = PatchEmbed(image_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.use_cond = num_classes is not None
         
-        if self.use_r_embedding:
+        if self.use_mean_flow:
             self.r_embedder = TimestepEmbedder(hidden_size)
         
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size, self.class_dropout_prob) if self.use_cond else None
+        self.y_embedder = LabelEmbedder(num_classes, hidden_size, self.class_dropout_prob, self.use_mean_flow) if self.use_cond else None
         
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
@@ -253,7 +257,7 @@ class DiT(nn.Module):
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         t = self.t_embedder(t)  # (N, D)
         
-        if self.use_r_embedding:
+        if self.use_mean_flow:
             r = self.r_embedder(r) 
             t = t + r  # (N, D)
             
