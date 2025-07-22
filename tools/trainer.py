@@ -107,6 +107,6 @@ class Trainer:
         if dist_util.is_main_process():
             self._update_ema()
             self.pbar.update(1)
-            self.pbar.set_postfix(mse=loss_accumulated)
+            self.pbar.set_postfix(mse_loss=loss_accumulated)
 
         return loss_accumulated  # Return scalar accumulated loss 
