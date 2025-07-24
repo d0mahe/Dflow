@@ -96,24 +96,56 @@ class FlowMatching:
             return lambda t: guidance_scale if t_from <= t <= t_to else 1.0
         return guidance_scale
     
-    # fix: r should be always not larger than t
+    # # fix: r should be always not larger than t
+    # def sample_t_r(self, x_start):
+    #     if self.time_dist[0] == 'uniform':
+    #         samples = np.random.rand(x_start.shape[0], 2).astype(np.float32)
+
+    #     elif self.time_dist[0] == 'lognorm':
+    #         mu, sigma = self.time_dist[-2], self.time_dist[-1]
+    #         normal_samples = np.random.randn(x_start.shape[0], 2).astype(np.float32) * sigma + mu
+    #         samples = 1 / (1 + np.exp(-normal_samples))  # Apply sigmoid, ensure samples are in [0, 1]
+        
+    #     # Assign t = max, r = min, for each pair
+    #     t_np = np.maximum(samples[:, 0], samples[:, 1])
+    #     r_np = np.minimum(samples[:, 0], samples[:, 1])
+
+    #     num_selected = int(self.flow_ratio * x_start.shape[0])
+    #     indices = np.random.permutation(x_start.shape[0])[:num_selected]
+    #     r_np[indices] = t_np[indices]
+
+    #     t = torch.tensor(t_np, device=x_start.device)
+    #     r = torch.tensor(r_np, device=x_start.device)
+    #     return t, r
+    
+     # fix: r should be always not larger than t
     def sample_t_r(self, x_start):
+
+        # Step 1: Sample from distribution
         if self.time_dist[0] == 'uniform':
             samples = np.random.rand(x_start.shape[0], 2).astype(np.float32)
-
+            
         elif self.time_dist[0] == 'lognorm':
             mu, sigma = self.time_dist[-2], self.time_dist[-1]
             normal_samples = np.random.randn(x_start.shape[0], 2).astype(np.float32) * sigma + mu
-            samples = 1 / (1 + np.exp(-normal_samples))  # Apply sigmoid, ensure samples are in [0, 1]
+            samples = 1 / (1 + np.exp(-normal_samples))  # sigmoid to [0, 1]
 
-        # Assign t = max, r = min, for each pair
-        t_np = np.maximum(samples[:, 0], samples[:, 1])
-        r_np = np.minimum(samples[:, 0], samples[:, 1])
+        # Step 2: Handle flow_ratio
+        if self.flow_ratio == 1.0:
+            # Pure flow matching: just use one column for t=r
+            t_np = samples[:, 0]
+            r_np = t_np.copy()
+        else:
+            # Mean flow: t > r
+            t_np = np.maximum(samples[:, 0], samples[:, 1])
+            r_np = np.minimum(samples[:, 0], samples[:, 1])
 
-        num_selected = int(self.flow_ratio * x_start.shape[0])
-        indices = np.random.permutation(x_start.shape[0])[:num_selected]
-        r_np[indices] = t_np[indices]
+            # Select some r=t samples based on flow_ratio
+            num_selected = int(self.flow_ratio * x_start.shape[0])
+            indices = np.random.permutation(x_start.shape[0])[:num_selected]
+            r_np[indices] = t_np[indices]
 
+        # Convert to tensors
         t = torch.tensor(t_np, device=x_start.device)
         r = torch.tensor(r_np, device=x_start.device)
         return t, r
@@ -134,8 +166,8 @@ class FlowMatching:
         
         # if not float_equal(self.guidance_scale, 1.0):
         if self.guidance_scale is not None:
-            # with torch.no_grad():
-            u_t = model(x_t, t, t, c_cfg).detach()
+            with torch.no_grad():
+                u_t = model(x_t, t, t, c_cfg)#.detach()
             v_hat_guided = guidance_scale * v_hat + (1 - guidance_scale) * u_t
 
             # if self.cfg_uncond == 'v':
@@ -145,7 +177,6 @@ class FlowMatching:
         else:
             return v_hat
         
-    # @torch.no_grad()    
     def compute_u_target(self, model, x_t, t, r, v_hat, c):
         """
         Compute model output and u_target = v_hat - (t - r) * ∂u/∂t
