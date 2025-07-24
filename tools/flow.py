@@ -166,9 +166,10 @@ class FlowMatching:
         
         # if not float_equal(self.guidance_scale, 1.0):
         if self.guidance_scale is not None:
-            with torch.no_grad():
-                u_t = model(x_t, t, t, c_cfg)#.detach()
-            v_hat_guided = guidance_scale * v_hat + (1 - guidance_scale) * u_t
+            #with torch.no_grad():
+            v_hat_uncond = model(x_t, t, t, c_cfg).detach()
+            
+            v_hat_guided = guidance_scale * v_hat + (1 - guidance_scale) * v_hat_uncond
 
             # if self.cfg_uncond == 'v':
             cfg_mask = rearrange(cfg_mask, "b -> b 1 1 1").bool()
